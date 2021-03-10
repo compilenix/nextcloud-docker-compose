@@ -1,0 +1,90 @@
+# vim: sw=2 et
+version: '3.2'
+
+volumes:
+  data:
+    driver_opts:
+      type: nfs
+      o: "addr=10.0.0.0,nolock,soft,rw"
+      device: ":/tank/user/cloud"
+
+services:
+  redis:
+    image: redis:alpine
+    command: redis-server --requirepass password
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  db:
+    image: mariadb:latest
+    command: --transaction-isolation=READ-COMMITTED --binlog-format=ROW
+    restart: unless-stopped
+    volumes:
+      - ./data/database:/var/lib/mysql
+    env_file:
+      - db.env
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  nextcloud:
+    image: nextcloud:20-apache
+    restart: unless-stopped
+    volumes:
+      - ./data/nextcloud:/var/www/html
+      - data:/var/www/html/data
+    environment:
+      - MYSQL_HOST=db
+      - REDIS_HOST=redis
+      - REDIS_HOST_PASSWORD=password
+    env_file:
+      - db.env
+    depends_on:
+      - db
+      - redis
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  cron:
+    image: nextcloud:20-apache
+    restart: unless-stopped
+    volumes:
+      - ./data/nextcloud:/var/www/html
+      - data:/var/www/html/data
+    entrypoint: /cron.sh
+    depends_on:
+      - nextcloud
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  proxy:
+    build: ./proxy
+    restart: unless-stopped
+    ports:
+      - 80:8080
+      - 443:8081
+    environment:
+      - 'BACKEND=nextcloud'
+      - 'DNS_NAMES=cloud.domain.tld'
+      - 'DNS_RESOLVER=10.0.0.0'
+    depends_on:
+      - nextcloud
+    volumes:
+      - ./data/x509/cloud.domain.tld:/etc/nginx/x509
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
